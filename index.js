@@ -1,83 +1,111 @@
 "use strict";
 
-var telegramBotToken = require('./bot-token-def');
+var telegramBotToken = '';
 
 var mma = require('mma');
-var AWS = require('aws-sdk');
-var dynamoDb = new AWS.DynamoDB();
+var emoji_flags = require('emoji-flags');
 var TelegramBot = require('node-telegram-bot-api');
 
-var telegramBot = new TelegramBot(telegramBotToken.token, {polling: false});    
-var tableName = 'MmaBotTable';
+var telegramBot = new TelegramBot(telegramBotToken, {polling: false});    
 
-var IsEmpty = function(obj) {
+var isEmpty = function(obj) {
   if (Object.getOwnPropertyNames(obj).length === 0) return true;
   else return false;
+}
+
+var boldify = function(str) { return '*' + str + '*'; }
+
+var ForceReplyOpts = {
+  parse_mode: 'Markdown',
+  reply_markup: JSON.stringify(
+    {
+      force_reply: true
+    })
+};
+
+var winLossQuickInfo = function(resp) {
+  var res = '';
+  var winTotal = resp.wins.total;
+  var winKo = resp.wins.knockouts;
+  var winSub = resp.wins.submissions;
+  var winDec = resp.wins.decisions;
+  var winOther = resp.wins.others;
+
+  var lossTotal = resp.losses.total;
+  var lossKo = resp.losses.knockouts;
+  var lossSub = resp.losses.submissions;
+  var lossDec = resp.losses.decisions;
+  var lossOther = resp.losses.others;
+
+  if (winTotal !== 0) {
+    res += boldify('WINS: ') + '\n';
+    if (winKo !== 0)
+      res += 'KO: ' + winKo + '(' + ((winKo / winTotal) * 100).toPrecision(3) + '%)\n';
+    if (winSub !== 0)
+      res += 'SUB: ' + winSub + '(' + ((winSub / winTotal) * 100).toPrecision(3) + '%)\n';
+    if (winDec !== 0)
+      res += 'DEC: ' + winDec + '(' + ((winDec / winTotal) * 100).toPrecision(3) + '%)\n'
+    if (winOther !== 0)
+      res += 'OTHER: ' + winOther + '(' + ((winOther / winTotal) * 100).toPrecision(3) + '%)\n';
+  }
+
+  if (lossTotal !== 0) {
+    res += boldify('LOSSES: ') + '\n';
+    if (lossKo !== 0)
+      res += 'KO: ' + lossKo + '(' + ((lossKo / lossTotal) * 100).toPrecision(3) + '%)\n';
+    if (lossSub !== 0)
+      res += 'SUB: ' + lossSub + '(' + ((lossSub / lossTotal) * 100).toPrecision(3) + '%)\n';
+    if (lossDec !== 0)
+      res += 'DEC: ' + lossDec + '(' + ((lossDec / lossTotal) * 100).toPrecision(3) + '%)\n'
+    if (lossOther !== 0)
+      res += 'OTHER: ' + lossOther + '(' + ((lossOther / lossTotal) * 100).toPrecision(3) + '%)\n';
+  }
+
+  return res;
+}
+
+var foundFighterResponse = function(resp) {
+  var res = boldify(resp.name) + '\n';
+  res += emoji_flags[resp.nationality].emoji + ' ' + resp.record + '\n';
+  res += resp.height + ' ' + resp.weight + ' (' + resp.weight_class + ')\n';
+  if (resp.nickname !== '') {
+    res += '"' + resp.nickname + '"\n';
+  }
+  res += '\n';
+  res += winLossQuickInfo(resp);
+  /* COMING SOON
+  res += '\n';
+  res += 'More stats:\n'
+  res += '/strikes\n';
+  res += '/takedowns\n';
+  */
+  return res;
 }
 
 exports.handler = function(event, context, lambdaCallback) {
   var chatId = event.message.chat.id;
   var userName = event.message.from.username;
 
-  // Find out if this user has an existing record in the DB:
-  dynamoDb.getItem({
-      'TableName': tableName,
-      'Key': {
-        'User': {
-          'S': userName
-        }
-      },
-      'ProjectionExpression': 'Fighter'
-    }, function(err, data) {
-      if (err) {
-        context.fail('ERROR: Get from Dynamo failed: ' + err);
-      } else {
-        if (IsEmpty(data)) {
-          telegramBot.sendMessage(chatId, 'You are a new user');
-
-          // --- NEW USER ---
-          // Query for Fighter
-          
-          var fighterQuery = event.message.text;
-          telegramBot.sendMessage(chatId, "MmaStatBot querying for '" + fighterQuery + "'");
-
-          var queryResponse;
-          mma.fighter(fighterQuery, function(data) {
-            queryResponse = data;
-            telegramBot.sendMessage(chatId, "Fighter " + queryResponse.name + " has " + queryResponse.wins.total + " wins.");
-
-            // --- Put to DynamoDB ---
-            var dateTime = new Date().getTime().toString();
-
-            // Put the fact that the user just queried a fighter into the dynamodb for this user:
-            dynamoDb.putItem({
-                'TableName': tableName,
-                'Item': {
-                  'User': {
-                    'S': userName
-                  },
-                  'Date': {
-                    'N': dateTime
-                  },
-                  'Fighter': {
-                    'S': queryResponse.name
-                  }
-                }
-              }, function(err, data) {
-                if (err) {
-                  context.fail('ERROR: Put to Dynamo failed: ' + err);
-                } else {
-                  telegramBot.sendMessage(chatId, 'Put to Dynamo Success' + JSON.stringify(data, null, '  '));
-                }
-              });
-
-            });
-        } else {
-          telegramBot.sendMessage(chatId, 'User found! ' + JSON.stringify(data, null, ' '));
-        }
-      }
-    });
+  // Query for Fighter
   
+  var fighterQuery = event.message.text;
+  telegramBot.sendMessage(chatId, "MmaStatBot querying for '" + fighterQuery + "'");
 
-};
+  var queryResponse;
+  mma.fighter(fighterQuery, function(data) {
+    queryResponse = data;
+    var msgText = foundFighterResponse(queryResponse);
+
+    var opts = ForceReplyOpts;
+    telegramBot.sendMessage(chatId, msgText, opts)
+      .then(function(sentMsg) {
+        var sentMsgChatId = sentMsg.chat.id;
+        var sentMsgMsgId = sentMsg.message_id;
+        telegramBot.onReplyToMessage(sentMsgChatId, sentMsgMsgId, function(replyMsg) {
+          telegramBot.sendMessage(chatId, "You replied " + replyMsg.text);
+        });
+      });
+  });
+
+}
 

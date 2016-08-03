@@ -2,6 +2,7 @@
   "private": true,
   "devDependencies": {},
   "dependencies": {
+    "emoji-flags": "^1.2.0",
     "mma": "^0.2.0",
     "node-telegram-bot-api": "^0.23.3"
   }

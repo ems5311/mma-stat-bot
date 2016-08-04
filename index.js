@@ -1,6 +1,6 @@
 "use strict";
 
-var telegramBotToken = 'YOURKEYHERE';
+var telegramBotToken = '';
 
 var mma = require('mma');
 var AWS = require('aws-sdk');
@@ -24,9 +24,35 @@ var getPercentage = function(x, y) {
   else return ''
 }
 
-var boldify = function(str) { return '*' + str + '*'; }
+var parseDate = function(date) {
+  var parsed = '';
+  var dateSplit = date.split('/');
+  var month = dateSplit[0].trim();
+  var day = dateSplit[1].trim();
+  var year = dateSplit[2].trim();
 
-var MessageOpts = {
+  if (month == 'Jan') parsed += '1';
+  else if (month == 'Feb') parsed += '2';
+  else if (month == 'Mar') parsed += '3';
+  else if (month == 'Apr') parsed += '4';
+  else if (month == 'May') parsed += '5';
+  else if (month == 'Jun') parsed += '6';
+  else if (month == 'Jul') parsed += '7';
+  else if (month == 'Aug') parsed += '8';
+  else if (month == 'Sep') parsed += '9';
+  else if (month == 'Oct') parsed += '10';
+  else if (month == 'Nov') parsed += '11';
+  else if (month == 'Dec') parsed += '12';
+  else parsed += 'noMonth';
+
+  parsed += '-' + day + '-' + year;
+  return parsed;
+}
+
+var boldify = function(str) { return '*' + str + '*'; }
+var italicize = function(str) { return '_' + str + '_'; }
+
+var MessageOpts = { // Include this var with bot sendMessage calls to include additional options
   parse_mode: 'Markdown',
 };
 
@@ -101,7 +127,7 @@ var printFoundFighterResponse = function(resp) {
 var runBotCommand = function(chatId, command, data) {
   if (command === BotCommand.Strikes) {
     var strikes = data.strikes;
-    var res = boldify(data.fullname) + ' _Striking_\n';
+    var res = boldify(data.fullname) + ' ' + italicize('Striking') + '\n';
     res += strikes.successful + ' successful of ' + strikes.attempted + ' attempted ';
     res += getPercentage(strikes.successful, strikes.attempted) + '\n';
     res += 'Standing: ' + strikes.standing + ' ' + getPercentage(strikes.standing, strikes.successful) + '\n';
@@ -110,7 +136,7 @@ var runBotCommand = function(chatId, command, data) {
     telegramBot.sendMessage(chatId, res, MessageOpts);
   } else if (command === BotCommand.Takedowns) {
     var takedowns = data.takedowns;
-    var res = boldify(data.fullname) + ' _Takedowns_\n';
+    var res = boldify(data.fullname) + ' ' + italicize('Takedowns') + '\n';
     res += takedowns.successful + ' successful of ' + takedowns.attempted + ' attempted ';
     res += getPercentage(takedowns.successful, takedowns.attempted) + '\n';
     res += 'Submissions: ' + takedowns.submissions + '\n';
@@ -118,20 +144,58 @@ var runBotCommand = function(chatId, command, data) {
     res += 'Sweeps: ' + takedowns.sweeps + '\n';
     telegramBot.sendMessage(chatId, res, MessageOpts);
   } else if (command === BotCommand.Fights) {
-    var res = boldify(data.fullname) + ' _Fights_\n';
+    var res = boldify(data.fullname) + ' ' + italicize('Fights') + '\n';
     var charCount = 0;
     data.fights.forEach(function(currentValue, index, array) {
-      var strJsonCurVal = JSON.stringify(currentValue) + '\n';
-      res += strJsonCurVal;
-      charCount += strJsonCurVal.length;
+      var fightInfoLine = fightQuickInfo(currentValue);
+      res += fightInfoLine;
     });
-    for (var i = 0; i < charCount / 4096; i++) {
-      telegramBot.sendMessage(chatId, res.substr((i * charCount), 4096), MessageOpts);
+    var textSegment = Math.ceil(res.length / 4096);
+    for (var i = 0; i < textSegment; i++) {
+      telegramBot.sendMessage(chatId, res.substr((i * 4096), 4096)/*, MessageOpts*/); // TODO - separate this by lines rather than just by text
     }
   } else {
     // Print 'couldn't read your command'
     return new Error('Couldn\'t run command');
   }
+}
+
+var fightQuickInfo = function(curVal) {
+  var res = '';
+
+  // Fight result (Bold)
+  var valResult = curVal.result.toLowerCase();
+  if (valResult === 'win') res += boldify('W');
+  else if (valResult === 'loss') res += boldify('L');
+  else res += boldify(valResult.toUpperCase());
+
+  res += ' ';
+  // Method that result was decided by (Italic)
+  var valMethod = curVal.method.toLowerCase();
+  if (valMethod.indexOf('sub') > -1) res += italicize('SUB');
+  else if (valMethod.indexOf('tko') > -1) res += italicize('TKO');
+  else if (valMethod.indexOf('ko') > -1) res += italicize('KO');
+  else if (valMethod.indexOf('dec') > -1) {
+    if (valMethod.indexOf('unan') > -1) res += italicize('UD');
+    else if (valMethod.indexOf('split') > -1) res += italicize('SD');
+    else res += italicize('DEC');
+  }
+  else if (valMethod.indexOf('draw') > -1) res += italicize('DRAW');
+  
+  res += ' ';
+  // Opponent name (Italic)
+  res += boldify(curVal.opponent);
+
+  res += ' ';
+  // Time, round fight ended
+  res += curVal.time + 'R' + curVal.round;
+
+  res += ' ';
+  // Date TODO: better formatting
+  res += italicize(parseDate(curVal.date));
+  
+  res += '\n';
+  return res;
 }
 
 exports.handler = function(event, context, lambdaCallback) {
@@ -148,6 +212,11 @@ exports.handler = function(event, context, lambdaCallback) {
       botCmd = BotCommand.Takedowns;
     } else if (msgText.substr(entities[0].offset, entities[0].length) === '/fights') {
       botCmd = BotCommand.Fights;
+    } else if (msgText.substr(entities[0].offset, entities[0].length) === '/start') {
+      var startResponse = 'Welcome to the Mma Stats Bot! Type a fighter\'s name to get started.\n';
+      startResponse += '(Try a full name like \'*Rin Nakai*\', or a nickname like \'*Little Nog*\')\n';
+      telegramBot.sendMessage(chatId, startResponse, MessageOpts);
+      return;
     }
   }
     

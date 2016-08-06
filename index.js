@@ -105,7 +105,7 @@ var winLossQuickInfo = function(resp) {
   return res;
 }
 
-var printFoundFighterResponse = function(resp) {
+var foundFighterResponse = function(resp) {
   var res = boldify(resp.name) + '\n';
   res += emoji_flags[resp.nationality].emoji + ' ' + resp.record + '\n';
   res += resp.height + ' ' + resp.weight + ' (' + resp.weight_class + ')\n';
@@ -199,77 +199,127 @@ var fightQuickInfo = function(curVal) {
 }
 
 exports.handler = function(event, context, lambdaCallback) {
-  var chatId = event.message.chat.id;
-  var userName = event.message.from.username;
-  var msgText = event.message.text;
-  var entities = event.message.entities;
-  var botCmd = BotCommand.None;
 
-  if (!isEmpty(entities) && !isEmpty(entities[0]) && entities[0].type === 'bot_command') { // See if this entity is one of our commands
-    if (msgText.substr(entities[0].offset, entities[0].length) === '/strikes') {
-      botCmd = BotCommand.Strikes;
-    } else if (msgText.substr(entities[0].offset, entities[0].length) === '/takedowns') {
-      botCmd = BotCommand.Takedowns;
-    } else if (msgText.substr(entities[0].offset, entities[0].length) === '/fights') {
-      botCmd = BotCommand.Fights;
-    } else if (msgText.substr(entities[0].offset, entities[0].length) === '/start') {
-      var startResponse = 'Welcome to the Mma Stats Bot! Type a fighter\'s name to get started.\n';
-      startResponse += '(Try a full name like \'*Rin Nakai*\', or a nickname like \'*Little Nog*\')\n';
-      telegramBot.sendMessage(chatId, startResponse, MessageOpts);
-      return;
-    }
+  // If this is a response from an inline query, lookup the fighter
+  if (event.chosen_inline_result != null) {
+
+    console.log('inside chosen_inline_result!!');
+    var resultId = event.chosen_inline_result.result_id;
+    var resultFrom = event.chosen_inline_result.from;
+    var resultQuery = event.chosen_inline_result.query;
+
+    telegramBot.sendMessage(resultId, 'from chosen_inline_query!');
   }
-    
-  // Find out if this user has an existing record in the DB:
-  dynamoDb.getItem({
-      'TableName': tableName,
-      'Key': {
-        'User': {
-          'S': userName
-        }
-      },
-      'ProjectionExpression': 'Fighter'
-    }, function(err, dbResponse) {
-      if (err) {
-        context.fail('ERROR: Get from Dynamo failed: ' + err);
-      } else {
-        if (isEmpty(dbResponse) || botCmd === BotCommand.None) {
-          mma.fighter(msgText, function(queryResponse) {
-            var msgResponse = printFoundFighterResponse(queryResponse);
+  // Find out if event.message is null, or event.inline_query is null
+  if (event.inline_query != null) {
 
-            telegramBot.sendMessage(chatId, msgResponse, MessageOpts);
+    // Respond by sending telegramBot.answerInlineQuery
+    var queryId = event.inline_query.id;
 
-            // --- Put to DynamoDB ---
-            var dateTime = new Date().getTime().toString();
+    var queryText = event.inline_query.query;
+    var queryOffset = event.inline_query.offset;
+    var querySender = event.inline_query.from;
 
-            // Put the fact that the user just queried a fighter into the dynamodb for this user:
-            dynamoDb.putItem({
-                'TableName': tableName,
-                'Item': {
-                  'User': {
-                    'S': userName
-                  },
-                  'Date': {
-                    'N': dateTime
-                  },
-                  'Fighter': {
-                    'S': queryResponse.name
-                  }
-                }
-              }, function(err, dbPut) {
-                if (err) {
-                  context.fail('ERROR: Put to Dynamo failed: ' + err);
-                } //else { telegramBot.sendMessage(chatId, 'Put to Dynamo Success' + JSON.stringify(data, null, '  ')); }
-              });
-          });
-        } else { // We found a name associated with this user in the DB, and a bot_command was given
-          var dbFighterName = dbResponse.Item.Fighter.S;
+    var queryResult = [];
+    var inlineQueryResultObj = {};
+    inlineQueryResultObj.type = 'article';
+    inlineQueryResultObj.id = queryId;
+    inlineQueryResultObj.title = 'Fighter';
 
-          mma.fighter(dbFighterName, function(queryResponse) { // Query for the fighter name in the db.
-            runBotCommand(chatId, botCmd, queryResponse);
-          });
-        }
-      }
+    var inputMessageContent = {};
+    //inputMessageContent.message_text = 'this is an inline query response... \n' + queryText;
+    //inlineQueryResultObj.input_message_content = inputMessageContent;
+
+    //queryResult.push(inlineQueryResultObj);
+    //telegramBot.answerInlineQuery(queryId, queryResult);
+    console.log('got query ' + queryText);
+
+    mma.fighter(queryText, function(queryResponse) {
+      var msgResponse = foundFighterResponse(queryResponse);
+
+      inputMessageContent.message_text = 'this is an inline query response... \n' + msgResponse;
+      inlineQueryResultObj.input_message_content = inputMessageContent;
+      queryResult.push(inlineQueryResultObj);
+
+      telegramBot.answerInlineQuery(queryId, queryResult);
     });
+
+  }
+
+  else if (event.message != null) {
+    var chatId = event.message.chat.id;
+    var userName = event.message.from.username;
+    var msgText = event.message.text;
+    var entities = event.message.entities;
+    var botCmd = BotCommand.None;
+
+    if (!isEmpty(entities) && !isEmpty(entities[0]) && entities[0].type === 'bot_command') { // See if this entity is one of our commands
+      if (msgText.substr(entities[0].offset, entities[0].length) === '/strikes') {
+        botCmd = BotCommand.Strikes;
+      } else if (msgText.substr(entities[0].offset, entities[0].length) === '/takedowns') {
+        botCmd = BotCommand.Takedowns;
+      } else if (msgText.substr(entities[0].offset, entities[0].length) === '/fights') {
+        botCmd = BotCommand.Fights;
+      } else if (msgText.substr(entities[0].offset, entities[0].length) === '/start') {
+        var startResponse = 'Welcome to the Mma Stats Bot! Type a fighter\'s name to get started.\n';
+        startResponse += '(Try a full name like \'*Rin Nakai*\', or a nickname like \'*Little Nog*\')\n';
+        telegramBot.sendMessage(chatId, startResponse, MessageOpts);
+        return;
+      }
+    }
+      
+    // Find out if this user has an existing record in the DB:
+    dynamoDb.getItem({
+        'TableName': tableName,
+        'Key': {
+          'User': {
+            'S': userName
+          }
+        },
+        'ProjectionExpression': 'Fighter'
+      }, function(err, dbResponse) {
+        if (err) {
+          context.fail('ERROR: Get from Dynamo failed: ' + err);
+        } else {
+          if (isEmpty(dbResponse) || botCmd === BotCommand.None) {
+            mma.fighter(msgText, function(queryResponse) {
+              var msgResponse = foundFighterResponse(queryResponse);
+
+              telegramBot.sendMessage(chatId, msgResponse, MessageOpts);
+
+              // --- Put to DynamoDB ---
+              var dateTime = new Date().getTime().toString();
+
+              // Put the fact that the user just queried a fighter into the dynamodb for this user:
+              dynamoDb.putItem({
+                  'TableName': tableName,
+                  'Item': {
+                    'User': {
+                      'S': userName
+                    },
+                    'Date': {
+                      'N': dateTime
+                    },
+                    'Fighter': {
+                      'S': queryResponse.name
+                    }
+                  }
+                }, function(err, dbPut) {
+                  if (err) {
+                    context.fail('ERROR: Put to Dynamo failed: ' + err);
+                  } //else { telegramBot.sendMessage(chatId, 'Put to Dynamo Success' + JSON.stringify(data, null, '  ')); }
+                });
+            });
+          } else { // We found a name associated with this user in the DB, and a bot_command was given
+            var dbFighterName = dbResponse.Item.Fighter.S;
+
+            mma.fighter(dbFighterName, function(queryResponse) { // Query for the fighter name in the db.
+              runBotCommand(chatId, botCmd, queryResponse);
+            });
+          }
+        }
+      });
+  }
+
 }
 

@@ -144,15 +144,19 @@ var runBotCommand = function(chatId, command, data) {
     res += 'Sweeps: ' + takedowns.sweeps + '\n';
     telegramBot.sendMessage(chatId, res, MessageOpts);
   } else if (command === BotCommand.Fights) {
-    var res = boldify(data.fullname) + ' ' + italicize('Fights') + '\n';
-    var charCount = 0;
-    data.fights.forEach(function(currentValue, index, array) {
-      var fightInfoLine = fightQuickInfo(currentValue);
-      res += fightInfoLine;
-    });
-    var textSegment = Math.ceil(res.length / 4096);
-    for (var i = 0; i < textSegment; i++) {
-      telegramBot.sendMessage(chatId, res.substr((i * 4096), 4096)/*, MessageOpts*/); // TODO - separate this by lines rather than just by text
+    var res = '';
+
+    var linesPerMessage = 80;
+    var linesToPrint = data.fights.length;
+    var msgToSendCount = Math.ceil(data.fights.length / linesPerMessage);
+    for (var i = 0; i < msgToSendCount; i++) {
+      for (var j = 0; j < Math.min(linesPerMessage, linesToPrint); j++) {
+        var fightInfoLine = fightQuickInfo(data.fights[(i * linesPerMessage) + j]);
+        res += fightInfoLine;
+      }
+      telegramBot.sendMessage(chatId, res + ' ' + res.length, MessageOpts);
+      res = '';
+      linesToPrint -= linesPerMessage;
     }
   } else {
     // Print 'couldn't read your command'
@@ -201,6 +205,7 @@ var fightQuickInfo = function(curVal) {
 exports.handler = function(event, context, lambdaCallback) {
 
   // If this is a response from an inline query, lookup the fighter
+  /*
   if (event.chosen_inline_result != null) {
 
     console.log('inside chosen_inline_result!!');
@@ -210,6 +215,7 @@ exports.handler = function(event, context, lambdaCallback) {
 
     telegramBot.sendMessage(resultId, 'from chosen_inline_query!');
   }
+  */
   // Find out if event.message is null, or event.inline_query is null
   if (event.inline_query != null) {
 
@@ -314,7 +320,13 @@ exports.handler = function(event, context, lambdaCallback) {
             var dbFighterName = dbResponse.Item.Fighter.S;
 
             mma.fighter(dbFighterName, function(queryResponse) { // Query for the fighter name in the db.
-              runBotCommand(chatId, botCmd, queryResponse);
+                /*
+              if (err) {
+                telegramBot.sendMessage(chatId, 'Error received - ' + err.toString());
+              } else {
+              */
+                runBotCommand(chatId, botCmd, queryResponse);
+              //}
             });
           }
         }
